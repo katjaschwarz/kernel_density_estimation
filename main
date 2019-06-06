@@ -1,0 +1,112 @@
+import numpy as np
+import matplotlib as mpl
+mpl.use('TkAgg')
+import matplotlib.pyplot as plt
+import seaborn as sns
+from scipy.stats import gaussian_kde
+
+
+def peaked_data(n_measurements=100, n_points=100, xrange=(0, 1), n_peaks=1, seed=123):
+    np.random.seed(seed)
+    x = np.linspace(xrange[0], xrange[1], n_points)
+    noise = np.random.randn(n_measurements, n_points)
+
+    # create peaks
+    peak_pos = np.random.choice(x[1:-1], n_peaks)       # exclude first and last point
+    y = noise
+    for i in range(n_measurements):
+        peak_idx = np.where(x == np.random.choice(peak_pos))[0] + np.random.randint(-1, 2)
+        y[i, peak_idx] = np.abs(y[i, peak_idx]) * 10
+
+    return x, y
+
+
+def find_changes(a):
+    """Returns first index position of change, e.g. 3 for change between index 3 and 4."""
+    dtype = int if a.dtype == bool else a.dtype
+    diff = a.astype(dtype)[:-1] - a.astype(dtype)[1:]
+    try:
+        return np.where(diff != 0)[0]
+    except IndexError:      # no differences
+        return np.array([])
+
+
+if __name__ == '__main__':
+    # generate data
+    n_measurements = 50
+    n_points = 200
+    n_peaks = 2
+    seed = 123
+    x, y = peaked_data(n_measurements=n_measurements, n_points=n_points, n_peaks=n_peaks, seed=seed)
+    plt.figure()
+    plt.title("Data")
+    plt.plot(x, y.transpose())
+
+    # compute variance
+    mean_var = y.var(axis=0).mean()
+    mean_mean = y.mean(axis=0).mean()
+    min_deviation = 4 * mean_var + mean_mean
+
+    plt.axhline(min_deviation)
+
+    # estimate peak positions
+    x_rep = np.expand_dims(x, 0).repeat(y.shape[0], axis=0)
+    peak_pos = x_rep[y > min_deviation]
+
+    # seaborn plot with gaussian density estimation and histogram
+    plt.figure()
+    plt.title("Seaborn distplot")
+    sns.distplot(peak_pos, hist=True, kde=True,
+                 norm_hist=True,
+                 bins=30, color='darkblue',
+                 hist_kws={'edgecolor': 'black'},
+                 kde_kws={'linewidth': 2})
+
+    # seaborn plot with gaussian density estimation
+    # compared to scipy.stats gaussian_kde
+    bw_method = "scott"         # beware: a scalar factor is interpreted differently by both methods
+    fig, axes = plt.subplots(1, 2)
+    plt.suptitle("kde plots")
+
+    ax = axes[0]
+    ax.set_title("seaborn")
+    p = sns.kdeplot(peak_pos, ax=ax, bw=bw_method)
+    x_fitted, y_fitted = p.get_lines()[0].get_data()
+    ax.set_xlim(x.min(), x.max())
+
+    def get_thresholds(x, y, frac_y_thresh=0.5):
+        y_thresh = frac_y_thresh * max(y)
+
+        idx = find_changes(y < y_thresh)
+        if y[0] < y_thresh:  # first change is from True to False, i.e. from below threshold to above
+            idx[1::2] += 1  # increase index from above to below
+        else:  # first change is from False to True, i.e. from above threshold to below
+            idx[0::2] += 1  # increase index from above to below
+
+        x_thresh = x[idx]
+
+        return x_thresh, y_thresh
+
+    x_thresh, y_thresh = get_thresholds(x_fitted, y_fitted)
+    ax.axhline(y_thresh, linestyle=(0, (5, 10)), color="grey")      # loosely dashed
+    text_offset = 0.01 * np.array([ax.get_xlim()[1] - ax.get_xlim()[0],
+                                   ax.get_ylim()[1] - ax.get_ylim()[0]])
+    for xt in x_thresh:
+        ax.axvline(xt, linestyle="--", color="r")
+        ax.text(xt+text_offset[0], text_offset[1], "{:.2f}".format(xt), color="r")
+
+    ax = axes[1]
+    ax.set_title("scipy.stats")
+    kde_fit = gaussian_kde(peak_pos, bw_method=bw_method)
+    x_fitted = x.copy()
+    y_fitted = kde_fit(x_fitted)
+    ax.set_xlim(x.min(), x.max())
+    plt.plot(x_fitted, y_fitted)
+
+    x_thresh, y_thresh = get_thresholds(x_fitted, y_fitted)
+    ax.axhline(y_thresh, linestyle=(0, (5, 10)), color="grey")      # loosely dashed
+    text_offset = 0.01 * np.array([ax.get_xlim()[1] - ax.get_xlim()[0],
+                                   ax.get_ylim()[1] - ax.get_ylim()[0]])
+    for xt in x_thresh:
+        ax.axvline(xt, linestyle="--", color="r")
+        ax.text(xt+text_offset[0], text_offset[1], "{:.2f}".format(xt), color="r")
